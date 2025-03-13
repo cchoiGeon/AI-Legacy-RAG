@@ -60,8 +60,8 @@ def split_text(text, chunk_size=1000, chunk_overlap=50):
     return text_splitter.split_text(text)
 
 
-def get_user_vector_store(uuid, userData):
-    """사용자의 벡터스토어를 생성 또는 로드"""
+def get_user_life_legacy_vector_store(uuid, userData):
+    """사용자의 자서전 데이터의 벡터스토어를 생성 또는 로드"""
     embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
     vectorstore_path = os.path.join(uuid, "life_legacy_data_index")
 
@@ -77,9 +77,30 @@ def get_user_vector_store(uuid, userData):
 
     return vectorstore
 
+def get_user_chat_vector_store(uuid, user_chat_data):
+    """사용자의 채팅 데이터의 벡터스토어를 생성 또는 로드"""
+    if user_chat_data is None: 
+        return None
+
+    embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    vectorstore_path = os.path.join(uuid, "chat_data_index")
+
+    if os.path.exists(vectorstore_path):
+        vectorstore = FAISS.load_local(vectorstore_path, embeddings, allow_dangerous_deserialization=True)
+    else:
+        # 텍스트 분할
+        split_documents = split_text(user_chat_data)
+
+        # 벡터스토어 생성 및 저장
+        vectorstore = FAISS.from_texts(split_documents, embeddings)
+        vectorstore.save_local(vectorstore_path)
+
+    return vectorstore
 
 def get_retriever(vectorstore):
     """FAISS 벡터스토어에서 검색기 생성"""
+    if vectorstore is None:
+        return None
     return vectorstore.as_retriever()
 
 
@@ -87,15 +108,22 @@ def get_prompt(role: str):
     """사용자의 자서전을 기반으로 특정 역할(role)에서 답변하는 프롬프트 생성"""
     return PromptTemplate.from_template(
         f"""
-        당신은 사용자의 자서전을 바탕으로, "{role}"의 입장에서 질문에 답변하는 역할을 합니다.
+        당신은 사용자의 자서전과 이전 대화를 바탕으로, "{role}"의 입장에서 질문에 답변하는 역할을 합니다.
         "{role}"의 말투와 사고방식을 반영하여 답변을 제공해야 합니다.
-        
-        만약 질문이 자서전 데이터에 포함된 정보와 관련이 있다면, "{role}"의 시각에서 직접 답변하세요.  
-        만약 질문이 자서전 데이터에 포함되지 않았다면, 자서전 내용을 바탕으로 "{role}"의 가치관과 성향을 유추하여 답변하세요.  
+
+        만약 질문이 자서전 데이터와 이전 대화에 포함된 정보와 관련이 있다면, "{role}"의 시각에서 직접 답변하세요.  
+        만약 질문이 자서전 데이터와 이전 대화에 포함되지 않았다면, 자서전 내용을 바탕으로 "{role}"의 가치관과 성향을 유추하여 답변하세요.  
         그래도 답할 수 없는 경우, "죄송합니다. 해당 정보는 자서전에서 찾을 수 없습니다."라고 정중하게 답변하세요.
+
+        또한, 이전 대화 기록을 참고하여 동일한 질문이 다시 나오면 이전 답변과 **완전히 같은 답변을 하지 마세요**.  
+        질문이 비슷하더라도, 새로운 시각에서 답변을 제공하거나 **더 깊이 있는 설명**을 추가하세요.  
+        답변이 중복되지 않도록 신경 쓰고, 사용자가 새로운 정보를 얻을 수 있도록 하세요.
 
         # 사용자 자서전:
         {{context}}
+
+        # 이전 대화:
+        {{chat}}
 
         # 현재 역할:
         {role}
@@ -103,7 +131,7 @@ def get_prompt(role: str):
         # 현재 질문:
         {{question}}
 
-        # 답변 ("{role}"의 입장에서 답변하세요):
+        # 답변 ("{role}"의 입장에서, 이전 답변과 다르게 답변하세요):
         """
     )
 
@@ -113,28 +141,43 @@ def get_llm():
     return ChatOpenAI(model_name="gpt-4o", temperature=0, openai_api_key=OPENAI_API_KEY)
 
 
-def get_chain(retriever, prompt, llm):
-    """LLM 체인 생성"""
+def get_chain(life_legacy_retriever, chat_retriever, prompt, llm):
+    """LLM 체인 생성 (NoneType 오류 방지)"""
+    
+    # chat_retriever가 None이면 빈 문자열을 기본값으로 설정
+    chat_runnable = chat_retriever if chat_retriever is not None else RunnablePassthrough()
+    
+    # life_legacy_retriever도 같은 방식으로 처리
+    life_legacy_runnable = life_legacy_retriever if life_legacy_retriever is not None else RunnablePassthrough()
+
     return (
-        {"context": retriever, "question": RunnablePassthrough()}
+        {"context": life_legacy_runnable, "question": RunnablePassthrough(), "chat": chat_runnable}
         | prompt
         | llm
         | StrOutputParser()
     )
 
 
-def main(question, uuid, userLifeLegacyData,role):
+
+def main(question, uuid, new_user_life_legacy_data,role):
     """메인 실행 함수"""
-    userData = load_user_data(uuid)
-    if userData is None:
-        userData = save_user_data(uuid, userLifeLegacyData)
+    user_life_legacy_data = load_user_data(uuid)
+    user_chat_data = load_user_chat_data(uuid)
+    print(user_chat_data)
+    if user_life_legacy_data is None:
+        user_life_legacy_data = save_user_data(uuid, new_user_life_legacy_data)
     
+
     # 벡터스토어 로드 또는 생성
-    vectorstore = get_user_vector_store(uuid, userData)
-    retriever = get_retriever(vectorstore)
+    life_legacy_vectorstore = get_user_life_legacy_vector_store(uuid, user_life_legacy_data)
+    chat_vectorstore = get_user_chat_vector_store(uuid,user_chat_data)
+    life_legacy_retriever = get_retriever(life_legacy_vectorstore)
+    chat_retriever = get_retriever(chat_vectorstore)
+
     prompt = get_prompt(role)
     llm = get_llm()
-    chain = get_chain(retriever, prompt, llm)
+
+    chain = get_chain(life_legacy_retriever, chat_retriever, prompt, llm)
 
     # 질문 실행
     response = chain.invoke(question)
