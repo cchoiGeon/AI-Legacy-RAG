@@ -36,6 +36,23 @@ def load_user_data(uuid):
     with open(file_path, "r", encoding="utf-8") as f:
         return f.read()
 
+def save_user_chat_data(uuid, question, response):
+    """사용자의 저장된 채팅 데이터를 저장함"""
+    file_path = os.path.join(uuid, "chat.txt")
+
+    with open(file_path, "a", encoding="utf-8") as f:  # "a" 모드로 추가 저장
+        f.write(f'question: {question}\n')
+        f.write(f'response: {response}\n')
+        f.write('-' * 50 + '\n')  # 구분선 추가
+
+def load_user_chat_data(uuid):
+    """사용자의 저장된 채팅 데이터를 불러옴"""
+    file_path = os.path.join(uuid, "chat.txt")
+    if not os.path.exists(file_path):
+        return None
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        return f.read()
 
 def split_text(text, chunk_size=1000, chunk_overlap=50):
     """문자열을 특정 크기로 분할"""
@@ -46,7 +63,7 @@ def split_text(text, chunk_size=1000, chunk_overlap=50):
 def get_user_vector_store(uuid, userData):
     """사용자의 벡터스토어를 생성 또는 로드"""
     embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-    vectorstore_path = os.path.join(uuid, "faiss_index")
+    vectorstore_path = os.path.join(uuid, "life_legacy_data_index")
 
     if os.path.exists(vectorstore_path):
         vectorstore = FAISS.load_local(vectorstore_path, embeddings, allow_dangerous_deserialization=True)
@@ -121,6 +138,9 @@ def main(question, uuid, userLifeLegacyData,role):
 
     # 질문 실행
     response = chain.invoke(question)
+
+    # 채팅 저장
+    save_user_chat_data(uuid, question, response)
     return response
 
 
