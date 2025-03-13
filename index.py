@@ -43,7 +43,6 @@ def save_user_chat_data(uuid, question, response):
     with open(file_path, "a", encoding="utf-8") as f:  # "a" 모드로 추가 저장
         f.write(f'question: {question}\n')
         f.write(f'response: {response}\n')
-        f.write('-' * 50 + '\n')  # 구분선 추가
 
 def load_user_chat_data(uuid):
     """사용자의 저장된 채팅 데이터를 불러옴"""
@@ -163,7 +162,6 @@ def main(question, uuid, new_user_life_legacy_data,role):
     """메인 실행 함수"""
     user_life_legacy_data = load_user_data(uuid)
     user_chat_data = load_user_chat_data(uuid)
-    print(user_chat_data)
     if user_life_legacy_data is None:
         user_life_legacy_data = save_user_data(uuid, new_user_life_legacy_data)
     
@@ -171,6 +169,7 @@ def main(question, uuid, new_user_life_legacy_data,role):
     # 벡터스토어 로드 또는 생성
     life_legacy_vectorstore = get_user_life_legacy_vector_store(uuid, user_life_legacy_data)
     chat_vectorstore = get_user_chat_vector_store(uuid,user_chat_data)
+
     life_legacy_retriever = get_retriever(life_legacy_vectorstore)
     chat_retriever = get_retriever(chat_vectorstore)
 
